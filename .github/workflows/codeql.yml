@@ -1,0 +1,27 @@
+name: "CodeQL"
+on:
+  pull_request:
+    paths:
+      - '**.py'  # 你可以根据实际使用的语言调整，比如 '.js', '.java', '.cpp' 等
+  push:
+    branches:
+      - main  # 你可以根据项目的默认分支修改为其他分支
+
+jobs:
+  analyze:
+    name: Analyze code with CodeQL
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up CodeQL
+        uses: github/codeql-action/setup@v2
+        with:
+          languages: 'python'  # 根据实际编程语言调整，支持 python, javascript, java, cpp 等
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v2
+        with:
+          category: 'security'
