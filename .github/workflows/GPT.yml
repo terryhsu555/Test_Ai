@@ -1,0 +1,87 @@
+name: PR CI - ASP.NET Core WebApp
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'  # 根據你使用的 .NET 版本調整
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+        
+      - name: Get PR Diff
+        id: diff
+        run: |
+          echo "Getting diff for PR #${{ github.event.pull_request.number }}"
+          git fetch origin main
+          git diff origin/main > diff.txt
+      
+      - name: Call OpenAI for Review
+        id: openai_review
+        run: |
+          echo "Calling OpenAI API to analyze code diff..."
+      
+          DIFF_CONTENT=$(cat diff.txt | head -c 6000 | jq -Rs .)
+      
+          REQUEST_DATA=$(jq -n \
+            --arg model "gpt-4o" \
+            --arg system_msg "你是一位資深程式碼審查員，專長在於找出技術債、重構建議與 clean code 和 SOLID 原則。" \
+            --arg user_msg "以下是 pull request 的程式碼差異，請指出是否有技術債、壞味道、維護風險、安全性問題，並給出重構建議：\n\n$(cat diff.txt | head -c 6000)" \
+            '{
+              model: $model,
+              temperature: 0.7,
+              messages: [
+                { role: "system", content: $system_msg },
+                { role: "user", content: $user_msg }
+              ]
+            }')
+      
+          echo "🟡 Sending this request to OpenAI:"
+          echo "$REQUEST_DATA" | jq .
+      
+          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+            -s \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            -d "$REQUEST_DATA")
+      
+          echo "🟢 OpenAI 回應內容："
+          echo "$RESPONSE" | jq .
+      
+          echo "$RESPONSE" | jq -r '.choices[0].message.content' > review.txt
+
+          REVIEW_CONTENT=$(cat review.txt | perl -pe 's/\\n/\n/g')
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$REVIEW_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            🤖 **AI 程式碼審查意見**
+            
+            以下是 OpenAI GPT-4o 對此 PR 的分析與建議：
+
+            ${{ steps.openai_review.outputs.review }}
+
+      - name: Run tests
+        run: dotnet test --no-build --configuration Release --logger "trx"
